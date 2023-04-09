@@ -8,7 +8,7 @@ from tqdm import tqdm
 def centered_gram_matrix(K: np.ndarray) -> np.ndarray:
     """Compute centered gram matrix from data"""
     n = K.shape[0]
-    return K - np.mean(K, axis=1)[:, None] - np.mean(K, axis=0)[None, :] + (1 / n ** 2) * np.sum(K)
+    return K - np.mean(K, axis=1)[None, :] - np.mean(K, axis=0)[:, None] + (1 / n ** 2) * np.sum(K)
 
 
 def compute_kernel_on_dataset(dataset: List[nx.Graph], kernel: Callable, kernel_kwargs=None,
@@ -26,6 +26,6 @@ def compute_kernel_on_dataset(dataset: List[nx.Graph], kernel: Callable, kernel_
                       disable=disable_tqdm, total=len(dataset)):
         for j, G2 in enumerate(dataset[i:]):
             res = kernel(G1, G2, **kernel_kwargs)
-            K[i, j] = res
-            K[j, i] = res
+            K[i, j+i] = res
+            K[j+i, i] = res
     return K
