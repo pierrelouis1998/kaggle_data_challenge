@@ -12,6 +12,7 @@ def kernel_pca(K: np.ndarray, n_components=2) -> np.ndarray:
     vals, vect = np.linalg.eigh(centered_gram)
     vals = vals[::-1]
     vect = vect[:, ::-1]
-    print(vect[:,0].T @ centered_gram @ vect[:,0] - vals[0])
+    if abs(vals[n_components]) < 1e-6:
+        raise ValueError(f"0 eigen value")
     # print(vals)
     return np.vstack([vect[:, i] / np.sqrt(vals[i]) for i in range(n_components)]).T
