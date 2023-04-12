@@ -1,12 +1,13 @@
 import numpy as np
-from cvxopt import matrix, spdiag
-from cvxopt.coneprog import qp
+from cvxopt import matrix, spdiag, solvers
 from sklearn.svm import SVC
 from tqdm import tqdm
 
+from kaggle_data_challenge.scratch.svc import SupportVectorClassification
+
 
 class RMKL:
-    def __init__(self, C=1.0, lr=1e-2, max_iter=1000):
+    def __init__(self, C=1.0, lr=1e-2, max_iter=1000, solver="libsvm"):
         self.kernel_radius: np.ndarray
         self.y: np.ndarray
         self.weights: np.ndarray
@@ -16,6 +17,7 @@ class RMKL:
         self.C = C
         self.learning_rate = lr
         self.num_iter = max_iter
+        self.solver = solver
 
     def fit(self, kernel_list, y):
         self.kernel_list, self.y = kernel_list, y
@@ -53,10 +55,19 @@ class RMKL:
         self.gamma = self.compute_gamma()
 
     def compute_gamma(self):
-        svm = SVC(C=self.C, kernel='precomputed').fit(self.kernel_matrix, self.y)
         n = len(self.y)
-        gamma = np.zeros(n)
-        gamma[svm.support_] = np.array(svm.dual_coef_)
+
+        if self.solver == "libsvm":
+            svm = SVC(C=self.C, kernel='precomputed').fit(self.kernel_matrix, self.y)
+            gamma = np.zeros(n)
+            gamma[svm.support_] = np.array(svm.dual_coef_)
+        else:
+            svm = SupportVectorClassification(C=self.C)
+            svm.fit(self.kernel_matrix, self.y)
+
+            gamma = np.zeros(n)
+            gamma[svm.support_vectors_idx] = np.array(svm.alphas)
+            gamma *= self.y
         idx_pos = gamma > 0
         idx_neg = gamma < 0
         sum_pos, sum_neg = gamma[idx_pos].sum(), gamma[idx_neg].sum()
@@ -90,6 +101,10 @@ class RMKL:
         A = matrix([1.0] * n).T
         b = matrix([1.0])
 
-        objective = qp(P, p, G, h, A, b)['primal objective']
+        solvers.options['show_progress'] = False
+        objective = solvers.qp(P, p, G, h, A, b)['primal objective']
 
         return abs(objective) ** .5
+
+    def get_kernel_matrix(self):
+        return self.sum_kernels(self.kernel_list, self.weights)
