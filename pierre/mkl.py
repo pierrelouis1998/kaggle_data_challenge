@@ -1,11 +1,14 @@
 import numpy as np
 import torch
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, auc, roc_curve
 from sklearn.model_selection import train_test_split, KFold
 from MKLpy.algorithms import GRAM, EasyMKL, PWMK, MEMO
 from MKLpy.scheduler import ReduceOnWorsening
 from MKLpy.callbacks import EarlyStopping
+from sklearn.svm import SVC
+from tqdm import tqdm
 
+from kaggle_data_challenge.scratch.rmkl import RMKL
 from kaggle_data_challenge.utils.load import load_my_data
 
 kernels = [
@@ -16,7 +19,7 @@ kernels = [
     # {"name": "graphlet_sampling"},
     # {"name": "subgraph_matching"},
     # {"name": "lovasz_theta"},
-    {"name": "svm_theta"},
+    # {"name": "svm_theta"},
     {"name": "neighborhood_hash"},
     # {"name": "neighborhood_subgraph_pairwise_distance"},
     # {"name": "odd_sth"},
@@ -26,15 +29,15 @@ kernels = [
     # {"name": "edge_histogram"},
     # {"name": "graph_hopper"},
     {"name": "weisfeiler_lehman"},
-    {"name": "hadamard_code"},
+    # {"name": "hadamard_code"},
 ]
 
 
 def load_kernel(name: str, with_label: bool = False) -> np.ndarray:
     if with_label:
-        return np.load(f"kernel/{name}_with_labels.npy")
+        return np.load(f"test_kernel_2/{name}_with_labels.npy")
     else:
-        return np.load(f"kernel/{name}.npy")
+        return np.load(f"test_kernel_2/{name}.npy")
 
 
 def load_all_kernels():
@@ -45,6 +48,7 @@ def load_all_kernels():
         except:
             pass
     # normalized_kernels = normalize_kernels(kernel_matrices)
+    normalize_kernels_2(kernel_matrices)
 
     return kernel_matrices
 
@@ -66,13 +70,19 @@ def normalize_kernels(kernel_matrices):
 
     return normalized_kernels
 
+def normalize_kernels_2(kernel_matrices):
+    for kernel_matrix in kernel_matrices:
+        kernel_matrix = kernel_matrix.astype(float)
+        kernel_matrix /= np.linalg.norm(kernel_matrix)
+        # kernel_matrix += (1. * np.eye(kernel_matrix.shape[0]))
 
-def main():
+
+def main(Cs):
     train_data, labels, _ = load_my_data()
 
     n_samples = len(labels)
     indices = np.arange(n_samples)
-    train_idx, test_idx = train_test_split(indices, test_size=0.15)
+    train_idx, test_idx = train_test_split(indices, test_size=0.15, stratify=labels)
 
     kernel_matrices = load_all_kernels()
     kernel_train_matrices = []
@@ -97,34 +107,81 @@ def main():
     # Easy
     # mkl = EasyMKL(lam=1.)
     # mkl = mkl.fit(kernel_train_matrices, train_labels)
+    # y_pred = mkl.predict(kernel_test_matrices)
+    # fpr, tpr, _ = roc_curve(test_labels, y_pred)
+    # auc_score = auc(fpr, tpr)
 
+    # accuracy = accuracy_score(test_labels, y_pred)
+
+    # print(f"AUC: {auc_score:.2%}")
     # PWNK
     # kernel_train_matrices_torch = torch.from_numpy(np.array(kernel_train_matrices))
     # cv = KFold(n_splits=5, shuffle=True, random_state=42)
     # mkl = PWMK(delta=0, cv=cv).fit(kernel_train_matrices_torch, train_labels)
 
     # MEMO
-    earlystop = EarlyStopping(
-        kernel_test_matrices, test_labels,  # validation data, KL is a validation kernels list
-        patience=5,  # max number of acceptable negative steps
-        cooldown=1,  # how ofter we run a measurement, 1 means every optimization step
-        metric='roc_auc',  # the metric we monitor
-    )
+    # kernel_train_matrices_torch = torch.from_numpy(np.array(kernel_train_matrices))
+    # earlystop = EarlyStopping(
+    #     kernel_test_matrices, test_labels,  # validation data, KL is a validation kernels list
+    #     patience=5,  # max number of acceptable negative steps
+    #     cooldown=1,  # how ofter we run a measurement, 1 means every optimization step
+    #     metric='roc_auc',  # the metric we monitor
+    # )
+
+    # ReduceOnWorsening automatically redure the learning rate when a worsening solution occurs
+    # scheduler = ReduceOnWorsening()
+    #
+    # mkl = MEMO(
+    #     max_iter=100,
+    #     learning_rate=0.1,
+    #     solver="cvxopt",
+    #     callbacks=[earlystop],
+    #     scheduler=scheduler).fit(kernel_train_matrices_torch, train_labels)
+    # y_pred = mkl.predict(kernel_test_matrices)
+    # fpr, tpr, _ = roc_curve(test_labels, y_pred)
+    # auc_score = auc(fpr, tpr)
+
+    # accuracy = accuracy_score(test_labels, y_pred)
+
+    # print(f"AUC: {auc_score:.2%}")
+
+    # R-MKL
+    # kernel_train_matrices_torch = torch.from_numpy(np.array(kernel_train_matrices))
+    # earlystop = EarlyStopping(
+    #     kernel_test_matrices, test_labels,  # validation data, KL is a validation kernels list
+    #     patience=5,  # max number of acceptable negative steps
+    #     cooldown=1,  # how ofter we run a measurement, 1 means every optimization step
+    #     metric='roc_auc',  # the metric we monitor
+    # )
 
     # ReduceOnWorsening automatically redure the learning rate when a worsening solution occurs
     scheduler = ReduceOnWorsening()
 
-    mkl = MEMO(
-        max_iter=1000,
-        learning_rate=.1,
-        callbacks=[earlystop],
-        scheduler=scheduler).fit(kernel_train_matrices, train_labels)
+    for C in Cs:
+        mkl = RMKL(max_iter=30, lr=.05, C=C)
 
-    y_pred = mkl.predict(kernel_test_matrices)
-    accuracy = accuracy_score(test_labels, y_pred)
+        mkl.fit(kernel_train_matrices, train_labels)
 
-    print(f"Accuracy: {accuracy:.2%}")
+        y_pred = mkl.predict(kernel_test_matrices)
+        fpr, tpr, _ = roc_curve(test_labels, y_pred)
+        auc_score = auc(fpr, tpr)
+
+        svc = SVC(kernel="precomputed", probability=True, C=C)
+        svc.fit(mkl.get_kernel_matrix(), train_labels)
+        local_kernel_test_matrix = mkl.sum_kernels(kernel_test_matrices, mkl.weights)
+        y_pred_2 = svc.predict_log_proba(local_kernel_test_matrix)
+        y_pred_logit = y_pred_2[:, 1] - y_pred_2[:, 0]
+        fpr, tpr, _ = roc_curve(test_labels, y_pred_logit)
+        auc_score_2 = auc(fpr, tpr)
+
+        # accuracy = accuracy_score(test_labels, y_pred)
+        print(f"C = {C}")
+        print(f"AUC: {auc_score:.2%}")
+        print(f"AUC(2): {auc_score_2:.2%}")
+
 
 
 if __name__ == '__main__':
-    main()
+    for i in range(10):
+        print(f"========================")
+        main(np.linspace(0.02, 0.04, 3))
